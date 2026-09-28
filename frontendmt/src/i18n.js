@@ -1,0 +1,103 @@
+import i18n from 'i18next';
+import { initReactI18next } from 'react-i18next';
+import LanguageDetector from 'i18next-browser-languagedetector';
+
+const resources = {
+  en: {
+    translation: {
+      appName: 'MyTrip',
+      tagline: 'TOUR & SHARED EXPENSE ENGINE',
+      allTrips: 'All Trips',
+      newTrip: '+ New Trip',
+      planNewTour: 'Plan New Tour',
+      createGroupTour: 'Create Group Tour',
+      tripOverview: '1. Trip Overview',
+      tripTitle: 'Trip Title',
+      destination: 'Destination',
+      startDate: 'Start Date',
+      endDate: 'End Date',
+      stayDetails: 'Stay / Hotel Details',
+      estimatedBudget: 'Estimated Budget Target (₹)',
+      membersSection: '2. Trip Members & Contributions',
+      addMember: '+ Add Member',
+      firstName: 'First Name',
+      lastName: 'Last Name',
+      mobile: 'Mobile',
+      poolShare: '₹ Pool Share',
+      saveAndPublish: 'Save & Publish Trip',
+      budgetPoolTitle: 'TRIP BUDGET & SHARED POOL',
+      totalTarget: 'Total Target Budget',
+      totalContributed: 'Total Contributed',
+      spentPool: 'Spent from Pool',
+      remainingBalance: 'Remaining Pool Balance',
+      logSharedExpense: 'Log Shared Expense',
+      expenseDescription: 'Expense Description',
+      amount: 'Amount (₹)',
+      paidBy: 'Paid By',
+      category: 'Category',
+      receiptOptional: 'Receipt Image (Optional)',
+      logDeduct: 'Log & Deduct from Pool',
+      optimalSettlements: 'Optimal Debt Settlements',
+      noDues: 'All member balances are settled. No dues pending.',
+      owes: 'owes',
+      loggedHistory: 'Logged Expense History',
+      noExpenses: 'No expenses recorded yet.',
+      backToAll: '← Back to All Trips',
+    },
+  },
+  mr: {
+    translation: {
+      appName: 'माझी सहल',
+      tagline: 'सहल आणि सामायिक खर्च व्यवस्थापक',
+      allTrips: 'सर्व सहली',
+      newTrip: '+ नवीन सहल',
+      planNewTour: 'नवीन सहलीचे नियोजन करा',
+      createGroupTour: 'नवीन सहल तयार करा',
+      tripOverview: '१. सहलीची माहिती',
+      tripTitle: 'सहलीचे नाव',
+      destination: 'ठिकाण',
+      startDate: 'सुरू तारीख',
+      endDate: 'समाप्ती तारीख',
+      stayDetails: 'हॉटेल / राहण्याची व्यवस्था',
+      estimatedBudget: 'अंदाजे बजेट लक्ष्य (₹)',
+      membersSection: '२. सहलीचे सदस्य आणि योगदान',
+      addMember: '+ सदस्य जोडा',
+      firstName: 'पहिले नाव',
+      lastName: 'आडनाव',
+      mobile: 'मोबाईल',
+      poolShare: '₹ योगदान रक्कम',
+      saveAndPublish: 'सहल सेव्ह करा',
+      budgetPoolTitle: 'सहल बजेट आणि सामायिक निधी',
+      totalTarget: 'एकूण अंदाजपत्रक',
+      totalContributed: 'जमा झालेला निधी',
+      spentPool: 'झालेला एकूण खर्च',
+      remainingBalance: 'शिल्लक राहिलेला निधी',
+      logSharedExpense: 'नवीन खर्च नोंदवा',
+      expenseDescription: 'खर्चाचा तपशील',
+      amount: 'रक्कम (₹)',
+      paidBy: 'खर्च करणारा सदस्य',
+      category: 'श्रेणी (वर्गवारी)',
+      receiptOptional: 'पावती / बिल फोटो (पर्यायी)',
+      logDeduct: 'खर्च नोंदवा आणि निधीतून वजा करा',
+      optimalSettlements: 'हिशोब आणि देणे-घेणे',
+      noDues: 'सर्व हिशोब पूर्ण झाले आहेत. कोणाचीही बाकी नाही.',
+      owes: 'देणे लागतो',
+      loggedHistory: 'नोंदवलेल्या खर्चाचा इतिहास',
+      noExpenses: 'अद्याप कोणताही खर्च नोंदवलेला नाही.',
+      backToAll: '← सर्व सहलींवर परत जा',
+    },
+  },
+};
+
+i18n
+  .use(LanguageDetector)
+  .use(initReactI18next)
+  .init({
+    resources,
+    fallbackLng: 'en',
+    interpolation: {
+      escapeValue: false,
+    },
+  });
+
+export default i18n;
