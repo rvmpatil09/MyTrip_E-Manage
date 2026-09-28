@@ -17,7 +17,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Backend Build
+      # 1. Backend Build (JDK 21)
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -57,29 +57,34 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin
+            echo "DOCKER_AUTH=true" >> $GITHUB_ENV
           else
-            echo "DOCKERHUB_USERNAME secret not provided. Skipping Docker Hub login."
+            echo "Docker Hub credentials missing. Skipping registry push."
+            echo "DOCKER_AUTH=false" >> $GITHUB_ENV
           fi
 
       - name: Build & Push Backend Image
         run: |
-          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+          if [ "$DOCKER_AUTH" = "true" ]; then
             docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-backend:latest" -t "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-backend:${{ github.sha }}" ./backendmt
             docker push "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-backend:latest"
             docker push "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-backend:${{ github.sha }}"
           else
-            echo "Skipping backend Docker push (no credentials)."
+            echo "Skipping backend image push."
           fi
 
       - name: Build & Push Frontend Image
         run: |
-          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+          if [ "$DOCKER_AUTH" = "true" ]; then
             docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-frontend:latest" -t "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-frontend:${{ github.sha }}" ./frontendmt
             docker push "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-frontend:latest"
             docker push "${{ secrets.DOCKERHUB_USERNAME }}/mytrip-frontend:${{ github.sha }}"
           else
-            echo "Skipping frontend Docker push (no credentials)."
+            echo "Skipping frontend image push."
           fi
