@@ -1,40 +1,45 @@
 package com.mytrip.backendmt.controller;
 
-import com.mytrip.backendmt.dto.SettlementDto;
 import com.mytrip.backendmt.entity.Expense;
-import com.mytrip.backendmt.repository.ExpenseRepository;
-import com.mytrip.backendmt.service.SettlementService;
+import com.mytrip.backendmt.service.ExpenseService;
+import com.mytrip.backendmt.service.TripService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-@RestController
-@RequestMapping("/api/expenses")
 @CrossOrigin(origins = "*")
+@RestController
+@RequestMapping("/api/trips")
 public class ExpenseController {
 
     @Autowired
-    private ExpenseRepository expenseRepository;
+    private ExpenseService expenseService;
 
+    // Fixes the red line on line 39
     @Autowired
-    private SettlementService settlementService;
+    private TripService tripService;
 
-    @PostMapping
-    public ResponseEntity<Expense> addExpense(@RequestBody Expense expense) {
-        return ResponseEntity.ok(expenseRepository.save(expense));
-    }
+    @PostMapping(value = "/{id}/expenses", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Expense> addExpense(
+            @PathVariable Long id,
+            @RequestParam("title") String title,
+            @RequestParam("amount") Double amount,
+            @RequestParam("paidBy") String paidBy,
+            @RequestParam(value = "category", required = false) String category,
+            @RequestParam(value = "splitAmong", required = false) List<String> splitAmong,
+            @RequestParam(value = "receipt", required = false) MultipartFile receipt) {
 
-    @GetMapping("/trip/{tripId}")
-    public ResponseEntity<List<Expense>> getExpensesByTrip(@PathVariable Long tripId) {
-        return ResponseEntity.ok(expenseRepository.findByTripId(tripId));
-    }
+        Expense expense = new Expense();
+        expense.setTitle(title);
+        expense.setAmount(amount);
+        expense.setPaidBy(paidBy);
+        expense.setCategory(category);
+        expense.setSplitAmong(splitAmong);
 
-    @GetMapping("/trip/{tripId}/settle")
-    public ResponseEntity<List<SettlementDto>> settleTrip(@PathVariable Long tripId) {
-        return ResponseEntity.ok(settlementService.calculateSettlements(tripId));
+        return ResponseEntity.ok(tripService.addExpense(id, expense, receipt));
     }
 }

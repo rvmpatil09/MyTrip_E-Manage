@@ -16,14 +16,29 @@ public class Trip {
 
     private String title;
     private String destination;
-    private String stayDetails;
-    private LocalDate startDate;
-    private LocalDate endDate;
+
+    @Column(name = "start_date")
+    private String startDate;
+
+    @Column(name = "end_date")
+    private String endDate;
+
+    @Column(name = "estimated_budget")
     private Double estimatedBudget;
 
-    // This creates a separate table `trip_members` linked to `trip_id`
-    @ElementCollection
+    @Column(name = "stay_details")
+    private String stayDetails;
+
+    @Column(name = "status", nullable = false)
+    private String status = "ACTIVE";
+
+    @Column(name = "media_drive_url", length = 1000)
+    private String mediaDriveUrl;
+
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "trip_members", joinColumns = @JoinColumn(name = "trip_id"))
-    @Column(name = "member_name")
-    private List<String> members = new ArrayList<>();
+    private List<TripMember> members = new ArrayList<>();
+
+    @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Expense> expenses = new ArrayList<>();
 }

@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+target/
+*.class
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+uploads/*
+!uploads/.gitkeep

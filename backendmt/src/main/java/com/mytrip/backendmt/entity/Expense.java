@@ -1,25 +1,39 @@
 package com.mytrip.backendmt.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
-import java.time.LocalDateTime;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
-@Table(name = "expenses")
 @Data
+@Table(name = "expenses")
 public class Expense {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long tripId;
-    private String title;           // e.g., "Dinner at Fisherman's Wharf"
+    private String title;
     private Double amount;
-    private String paidBy;          // Name or User ID of the payer
-    private String paymentMode;     // "UPI" or "CASH"
-    private String proofUrl;        // Link or file name of the screenshot/receipt
-    private String category;        // FOOD, STAY, TRAVEL, MISC
+    private String paidBy;
+    private String category;
+    private String receiptUrl;
+    private String paymentMode;
 
-    private LocalDateTime createdAt = LocalDateTime.now();
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "trip_id", nullable = false)
+    @JsonIgnore
+    private Trip trip;
+
+    public Long getTripId() {
+        return this.trip != null ? this.trip.getId() : null;
+    }
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "expense_split_members", joinColumns = @JoinColumn(name = "expense_id"))
+    @Column(name = "member_name")
+    private List<String> splitAmong = new ArrayList<>();
 }
