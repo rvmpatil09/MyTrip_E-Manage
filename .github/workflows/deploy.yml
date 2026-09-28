@@ -1,0 +1,99 @@
+name: Mytrip-E-Manage Release Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - release/*
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-and-lint:
+    name: Lint & Automated Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Test Spring Boot Backend
+        run: |
+          cd backendmt
+          mvn clean test -Dspring.profiles.active=test
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontendmt/package-lock.json
+
+      - name: Build & Test React Frontend
+        run: |
+          cd frontendmt
+          npm ci
+          npm run build
+
+  build-and-push:
+    name: Build & Push Docker Images
+    needs: test-and-lint
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backendmt
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/mytrip-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/mytrip-backend:${{ github.sha }}
+
+      - name: Build & Push Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontendmt
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/mytrip-frontend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/mytrip-frontend:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Production Server
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /opt/mytrip-e-manage
+            docker-compose pull
+            docker-compose up -d --remove-orphans
+            docker system prune -f

@@ -1,36 +1,63 @@
+version: '3.8'
 
 services:
   mysql:
     image: mysql:8.0
-    container_name: trip_mysql
+    container_name: mytrip-mysql
+    restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: trip_db
-    ports:
-      - "3306:3306"
+      MYSQL_DATABASE: my_trip_db
+      MYSQL_USER: ${DB_USER:-mytrip_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-mytrip_secret}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
     volumes:
       - mysql_data:/var/lib/mysql
+    networks:
+      - mytrip-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: trip_kafka
-    ports:
-      - "9092:9092"
+  backend:
+    build:
+      context: ./backendmt
+      dockerfile: Dockerfile
+    container_name: mytrip-backend
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
     environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: my_trip_db
+      DB_USER: ${DB_USER:-mytrip_user}
+      DB_PASSWORD: ${DB_PASSWORD:-mytrip_secret}
+      JWT_SECRET: ${JWT_SECRET:-MyTripSecretKeyForJwtAuthenticationWhichIsVeryLongAndSecure2026!}
+    volumes:
+      - receipt_uploads:/app/uploads
+    networks:
+      - mytrip-network
+
+  frontend:
+    build:
+      context: ./frontendmt
+      dockerfile: Dockerfile
+    container_name: mytrip-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - mytrip-network
 
 volumes:
   mysql_data:
+  receipt_uploads:
+
+networks:
+  mytrip-network:
+    driver: bridge
