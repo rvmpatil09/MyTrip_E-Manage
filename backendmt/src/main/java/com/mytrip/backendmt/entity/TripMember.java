@@ -1,21 +1,25 @@
 package com.mytrip.backendmt.entity;
 
-import jakarta.persistence.Embeddable;
-import lombok.AllArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.persistence.*;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
-@Embeddable
+@Entity
+@Table(name = "trip_members")
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class TripMember {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
     private String firstName;
     private String lastName;
-    private String mobileNumber;
     private Double contribution;
+    private String mobileNumber;
 
-    public String getFullName() {
-        return (firstName != null ? firstName : "") + " " + (lastName != null ? lastName : "").trim();
-    }
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "trip_id")
+    @JsonIgnore
+    private Trip trip;
 }

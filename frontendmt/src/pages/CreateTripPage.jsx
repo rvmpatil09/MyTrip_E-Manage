@@ -64,7 +64,7 @@ export default function CreateTripPage() {
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
+  
   // Confirmation Modal state
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [createdTripSummary, setCreatedTripSummary] = useState(null);
@@ -225,31 +225,35 @@ export default function CreateTripPage() {
       members: validMembers,
       expenses: [],
     };
-
+ 
     try {
-      setLoading(true);
-      const res = await fetch('http://localhost:8080/api/trips', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+    setLoading(true);
 
-      if (!res.ok) {
-        throw new Error(`Failed to create trip (HTTP ${res.status})`);
-      }
+    const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
 
-      const createdData = await res.json();
-      setCreatedTripSummary(createdData);
-      setShowConfirmModal(true);
-    } catch (err) {
-      console.error(err);
-      setErrorMsg(err.message || 'Error creating trip. Check backend connection.');
-    } finally {
-      setLoading(false);
+    const response = await fetch('http://localhost:8080/api/trips', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(payload) // 1. Use payload here
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to create trip (HTTP ${response.status})`);
     }
-  };
+
+    const createdData = await response.json(); // 2. Use response.json() instead of res.json()
+    setCreatedTripSummary(createdData);
+    setShowConfirmModal(true);
+  } catch (err) {
+    console.error(err);
+    setErrorMsg(err.message || 'Error creating trip. Check backend connection.');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleProceedToDashboard = () => {
     setShowConfirmModal(false);

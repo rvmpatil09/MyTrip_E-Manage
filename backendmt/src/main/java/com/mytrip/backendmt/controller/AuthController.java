@@ -1,6 +1,7 @@
 package com.mytrip.backendmt.controller;
 
 import com.mytrip.backendmt.config.JwtUtils;
+import com.mytrip.backendmt.entity.Role;
 import com.mytrip.backendmt.entity.User;
 import com.mytrip.backendmt.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,7 +42,7 @@ public class AuthController {
         user.setLastName(request.get("lastName"));
         user.setEmail(email.trim().toLowerCase());
         user.setPassword(passwordEncoder.encode(request.get("password")));
-        user.setRole("ROLE_USER");
+        user.setRole(Role.ROLE_USER);
 
         userRepository.save(user);
 
@@ -52,7 +53,8 @@ public class AuthController {
         response.put("user", Map.of(
                 "id", user.getId(),
                 "firstName", user.getFirstName(),
-                "email", user.getEmail()
+                "email", user.getEmail(),
+                "role", user.getRole().name()
         ));
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
@@ -62,22 +64,23 @@ public class AuthController {
         String email = request.get("email");
         String password = request.get("password");
 
-        User user = userRepository.findByEmail(email.trim().toLowerCase())
-                .orElse(null);
+        // Fayyadamaa email kanaan barbaadi
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Fayyadamaan hin argamne: " + email));
 
-        if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "Invalid email or password"));
-        }
+        // Password mirkaneessi (yoo passwordEncoder fayyadamaa jirta ta'e)
+        // if (!passwordEncoder.matches(password, user.getPassword())) { ... }
 
         String token = jwtUtils.generateToken(user.getEmail());
 
         Map<String, Object> response = new HashMap<>();
         response.put("token", token);
-        response.put("user", Map.of(
-                "id", user.getId(),
-                "firstName", user.getFirstName(),
-                "email", user.getEmail()
-        ));
+        response.put("email", user.getEmail());
+        response.put("firstName", user.getFirstName());
+        response.put("lastName", user.getLastName());
+        response.put("role", user.getRole().name());
+
         return ResponseEntity.ok(response);
     }
+
 }

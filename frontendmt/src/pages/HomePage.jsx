@@ -56,29 +56,67 @@ export default function HomePage() {
   };
 
   useEffect(() => {
+    const fetchTrips = async () => {
+      const token = localStorage.getItem('trip_token');
+      
+      if (!token) {
+        console.warn("No trip_token found in localStorage");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch('http://localhost:8080/api/trips', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+        const data = await res.json();
+        setTrips(data);
+      } catch (err) {
+        console.error("Failed to load user trips:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchTrips();
   }, []);
-
   // Delete trip directly from the dashboard card
-  const handleDeleteTrip = async (e, tripId, tripTitle) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // 1. Get current user credentials
+  const currentEmail = localStorage.getItem('email');
+  const userRole = localStorage.getItem('role');
+  const isAdmin = userRole === 'ROLE_ADMIN';
 
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${tripTitle || `Trip #${tripId}`}"? All expenses, member shares, and records will be deleted.`
-    );
-    if (!confirmed) return;
+  // 2. Delete Handler Function
+  const handleDeleteTrip = async (e, tripId, tripTitle) => {
+    e.stopPropagation(); // Prevents clicking the card link
+
+    if (!window.confirm(`Are you sure you want to delete the trip "${tripTitle}"?`)) {
+      return;
+    }
+
+    const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
 
     try {
       const res = await fetch(`http://localhost:8080/api/trips/${tripId}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to delete trip (HTTP ${res.status})`);
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.message || `Failed to delete (HTTP ${res.status})`);
       }
 
-      setTrips((prevTrips) => prevTrips.filter((trip) => trip.id !== tripId));
+      // Remove from local UI state
+      setTrips((prevTrips) => prevTrips.filter((t) => t.id !== tripId));
     } catch (err) {
       alert(err.message || 'Error deleting trip');
     }

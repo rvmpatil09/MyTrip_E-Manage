@@ -3,6 +3,7 @@ package com.mytrip.backendmt.service;
 import com.mytrip.backendmt.entity.Expense;
 import com.mytrip.backendmt.entity.Trip;
 import com.mytrip.backendmt.entity.TripMember;
+import com.mytrip.backendmt.entity.User;
 import com.mytrip.backendmt.repository.TripRepository;
 import com.twilio.Twilio;
 import com.twilio.rest.api.v2010.account.Message;
@@ -60,7 +61,9 @@ public class NotificationService {
         );
 
         for (TripMember member : trip.getMembers()) {
-            if (member.getMobileNumber() == null || member.getMobileNumber().isBlank()) continue;
+            if (member.getMobileNumber() == null || member.getMobileNumber().isBlank()) {
+                continue;
+            }
 
             // Ensure E.164 country code format (defaulting to +91 if missing)
             String rawPhone = member.getMobileNumber().trim();

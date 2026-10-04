@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mysql:
     image: mysql:8.0
@@ -7,44 +5,44 @@ services:
     restart: always
     environment:
       MYSQL_DATABASE: my_trip_db
-      MYSQL_USER: ${DB_USER:-mytrip_user}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-mytrip_secret}
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
+      MYSQL_ROOT_PASSWORD: root_secret
+    ports:
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
       - mytrip-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_secret"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   backend:
-    build:
-      context: ./backendmt
-      dockerfile: Dockerfile
+    image: rvprodocker/mytrip-backend:latest
     container_name: mytrip-backend
     restart: always
+    ports:
+      - "8080:8080"
     depends_on:
       mysql:
         condition: service_healthy
     environment:
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_NAME: my_trip_db
-      DB_USER: ${DB_USER:-mytrip_user}
-      DB_PASSWORD: ${DB_PASSWORD:-mytrip_secret}
-      JWT_SECRET: ${JWT_SECRET:-MyTripSecretKeyForJwtAuthenticationWhichIsVeryLongAndSecure2026!}
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/my_trip_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true"
+      SPRING_DATASOURCE_USERNAME: "root"
+      SPRING_DATASOURCE_PASSWORD: "root_secret"
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: "com.mysql.cj.jdbc.Driver"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: "org.hibernate.dialect.MySQLDialect"
+      SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
+      SERVER_PORT: "8080"
     volumes:
       - receipt_uploads:/app/uploads
     networks:
       - mytrip-network
 
   frontend:
-    build:
-      context: ./frontendmt
-      dockerfile: Dockerfile
+    image: rvprodocker/mytrip-frontend:latest
     container_name: mytrip-frontend
     restart: always
     ports:
@@ -61,3 +59,12 @@ volumes:
 networks:
   mytrip-network:
     driver: bridge
+
+kafka:
+    image: confluentinc/cp-kafka:latest
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL    

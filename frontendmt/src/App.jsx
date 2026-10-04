@@ -9,9 +9,9 @@ import TripDetailPage from './pages/TripDetailPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 
-// Inline ProtectedRoute guard
+// Inline Route Protection Guard
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem('trip_token');
+  const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
   const location = useLocation();
 
   if (!token) {
@@ -23,7 +23,6 @@ function ProtectedRoute({ children }) {
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(() => {
-    // Show splash screen on first session launch
     return !sessionStorage.getItem('splash_viewed');
   });
 
@@ -84,7 +83,7 @@ export default function App() {
               }
             />
 
-            {/* Fallback */}
+            {/* Catch-all Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

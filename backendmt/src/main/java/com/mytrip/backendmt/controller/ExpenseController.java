@@ -40,6 +40,6 @@ public class ExpenseController {
         expense.setCategory(category);
         expense.setSplitAmong(splitAmong);
 
-        return ResponseEntity.ok(tripService.addExpense(id, expense, receipt));
+        return ResponseEntity.ok(expenseService.addExpenseToTrip(id, expense, receipt));
     }
 }

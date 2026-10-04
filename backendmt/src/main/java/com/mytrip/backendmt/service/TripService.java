@@ -1,170 +1,265 @@
 package com.mytrip.backendmt.service;
 
-import com.mytrip.backendmt.dto.SettlementResponse;
-import com.mytrip.backendmt.entity.Expense;
-import com.mytrip.backendmt.entity.Trip;
-import com.mytrip.backendmt.entity.TripMember;
+import com.mytrip.backendmt.entity.*;
+import com.mytrip.backendmt.repository.SettlementRecordRepository;
 import com.mytrip.backendmt.repository.TripRepository;
+import com.mytrip.backendmt.repository.UserRepository;
+import lombok.Data;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDate;
 import java.util.*;
 
+@Data
 @Service
 public class TripService {
 
-    @Autowired
-    private TripRepository tripRepository;
+    private final TripRepository tripRepository;
+    private final UserRepository userRepository;
+    private final SettlementRecordRepository settlementRecordRepository;
+
+    public TripService(TripRepository tripRepository,
+                       UserRepository userRepository,
+                       SettlementRecordRepository settlementRecordRepository) {
+        this.tripRepository = tripRepository;
+        this.userRepository = userRepository;
+        this.settlementRecordRepository = settlementRecordRepository;
+    }
+
+    @Transactional
+    public SettlementRecord recordSettlement(Long tripId, String fromUser, String toUser, Double amount) {
+        SettlementRecord record = new SettlementRecord();
+        record.setTripId(tripId);
+        record.setFromUser(fromUser);
+        record.setToUser(toUser);
+        record.setAmount(amount);
+        return settlementRecordRepository.save(record);
+    }
+
 
     @Transactional
     public Trip createTrip(Trip trip) {
-        if (trip.getStatus() == null) trip.setStatus("ACTIVE");
-        if (trip.getMembers() == null) trip.setMembers(new ArrayList<>());
-        if (trip.getExpenses() == null) trip.setExpenses(new ArrayList<>());
-        return tripRepository.saveAndFlush(trip);
-    }
+        User currentUser = getCurrentAuthenticatedUser();
 
-    public List<Trip> getAllTrips() {
-        return tripRepository.findAll();
-    }
+        // Set the creator of the trip
+        trip.setCreatedBy(currentUser);
 
-    public Trip getTripById(Long id) {
-        return tripRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + id));
-    }
-
-    @Transactional
-    public void deleteTrip(Long id) {
-        Trip trip = tripRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + id));
-        tripRepository.delete(trip);
-    }
-
-    @Transactional
-    public Trip updateMediaDriveUrl(Long id, String mediaDriveUrl) {
-        Trip trip = tripRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + id));
-        trip.setMediaDriveUrl(mediaDriveUrl != null ? mediaDriveUrl.trim() : null);
-        return tripRepository.save(trip);
-    }
-
-    @Transactional
-    public Trip concludeTrip(Long id) {
-        Trip trip = tripRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + id));
-        trip.setStatus("CONCLUDED");
-        trip.setEndDate(LocalDate.now().toString());
-        return tripRepository.save(trip);
-    }
-
-    @Transactional
-    public Expense addExpense(Long tripId, Expense expense, MultipartFile receipt) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + tripId));
-
-        if ("CONCLUDED".equalsIgnoreCase(trip.getStatus())) {
-            throw new IllegalStateException("Cannot log expenses to a concluded trip.");
+        // Ensure the members collection is initialized
+        if (trip.getMembers() == null) {
+            trip.setMembers(new java.util.ArrayList<>());
         }
 
-        if (receipt != null && !receipt.isEmpty()) {
-            try {
-                String uploadDir = "uploads/";
-                Path uploadPath = Paths.get(uploadDir);
-                if (!Files.exists(uploadPath)) {
-                    Files.createDirectories(uploadPath);
-                }
-                String filename = UUID.randomUUID() + "_" + receipt.getOriginalFilename();
-                Path filePath = uploadPath.resolve(filename);
-                Files.copy(receipt.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
-                expense.setReceiptUrl("/uploads/" + filename);
-            } catch (IOException e) {
-                throw new RuntimeException("Could not store receipt file", e);
+        // Add creator as a confirmed member if not already present
+        boolean alreadyMember = trip.getMembers().stream()
+                .anyMatch(m -> currentUser.getFirstName().equalsIgnoreCase(m.getFirstName())
+                        && currentUser.getLastName().equalsIgnoreCase(m.getLastName()));
+
+        if (!alreadyMember) {
+            TripMember creatorMember = new TripMember();
+            creatorMember.setFirstName(currentUser.getFirstName());
+            creatorMember.setLastName(currentUser.getLastName());
+            creatorMember.setContribution(0.0);
+            creatorMember.setTrip(trip); // link member to this trip
+            trip.getMembers().add(creatorMember);
+        } else {
+            // Ensure all existing members have their back-reference to trip set
+            for (TripMember m : trip.getMembers()) {
+                m.setTrip(trip);
             }
         }
 
-        expense.setTrip(trip);
-        trip.getExpenses().add(expense);
-        tripRepository.save(trip);
-        return expense;
+        return tripRepository.save(trip);
     }
 
-    public List<SettlementResponse> calculateSettlements(Long tripId) {
+    private User getCurrentAuthenticatedUser() {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("Authenticated user not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public List<Trip> getUserTrips() {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        User currentUser = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("Authenticated user not found: " + email));
+
+        // 1. Admin gets all trips globally
+        if (currentUser.getRole() == Role.ROLE_ADMIN) {
+            return tripRepository.findAll();
+        }
+
+        // 2. Standard user: Get trips created by this user or joined as member
+        String firstName = currentUser.getFirstName() != null ? currentUser.getFirstName() : "";
+        String lastName = currentUser.getLastName() != null ? currentUser.getLastName() : "";
+
+        List<Trip> trips = tripRepository.findAllByUserOrMember(currentUser.getEmail(), firstName, lastName);
+
+        // Fallback: If no trips returned via member check, ensure created trips are returned
+        if (trips.isEmpty()) {
+            trips = tripRepository.findByCreatedByEmail(currentUser.getEmail());
+        }
+
+        return trips;
+    }
+
+    @Transactional(readOnly = true)
+    public Trip getTripDetails(Long tripId) {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        User currentUser = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + email));
+
+        // 1. First find the trip
         Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + tripId));
+                .orElseThrow(() -> new RuntimeException("Trip not found with ID: " + tripId));
 
-        List<TripMember> members = trip.getMembers();
+        // 2. Admins and the trip creator always have full access
+        if (currentUser.getRole() == Role.ROLE_ADMIN ||
+                (trip.getCreatedBy() != null && trip.getCreatedBy().getEmail().equalsIgnoreCase(currentUser.getEmail()))) {
+            return trip;
+        }
+
+        // 3. Otherwise check if user is in members list
+        String firstName = currentUser.getFirstName() != null ? currentUser.getFirstName().trim() : "";
+        String lastName = currentUser.getLastName() != null ? currentUser.getLastName().trim() : "";
+
+        boolean isMember = trip.getMembers() != null && trip.getMembers().stream().anyMatch(m ->
+                (firstName.length() > 0 && m.getFirstName() != null && m.getFirstName().equalsIgnoreCase(firstName)) ||
+                        (lastName.length() > 0 && m.getLastName() != null && m.getLastName().equalsIgnoreCase(lastName))
+        );
+
+        if (!isMember) {
+            throw new org.springframework.security.access.AccessDeniedException("Access denied: You are not authorized to view this trip");
+        }
+
+        return trip;
+    }
+
+    public List<Trip> getAllTripsGlobal() {
+        return tripRepository.findAll();
+    }
+
+    public List<Map<String, Object>> calculateSettlements(Long tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new RuntimeException("Trip not found"));
+
         List<Expense> expenses = trip.getExpenses();
-
-        if (members == null || members.isEmpty() || expenses == null || expenses.isEmpty()) {
+        if (expenses == null || expenses.isEmpty()) {
             return Collections.emptyList();
         }
 
         Map<String, Double> balances = new HashMap<>();
-        for (TripMember m : members) {
-            String name = (m.getFirstName() + " " + (m.getLastName() != null ? m.getLastName() : "")).trim();
-            balances.put(name, 0.0);
-        }
 
-        for (Expense e : expenses) {
-            String payer = e.getPaidBy();
-            double amount = e.getAmount() != null ? e.getAmount() : 0.0;
-
-            if (payer != null && balances.containsKey(payer)) {
-                balances.put(payer, balances.get(payer) + amount);
-            }
-
-            List<String> participants = (e.getSplitAmong() != null && !e.getSplitAmong().isEmpty())
-                    ? e.getSplitAmong()
-                    : new ArrayList<>(balances.keySet());
-
-            double share = amount / participants.size();
-            for (String participant : participants) {
-                if (balances.containsKey(participant)) {
-                    balances.put(participant, balances.get(participant) - share);
-                }
+        // 1. Initialize members
+        if (trip.getMembers() != null) {
+            for (TripMember member : trip.getMembers()) {
+                String fullName = (member.getFirstName() + " " + (member.getLastName() != null ? member.getLastName() : "")).trim();
+                balances.put(fullName, 0.0);
             }
         }
 
-        Queue<Map.Entry<String, Double>> debtors = new LinkedList<>();
-        Queue<Map.Entry<String, Double>> creditors = new LinkedList<>();
+        // 2. Compute raw balances from expenses
+        for (Expense expense : expenses) {
+            String payer = expense.getPaidBy() != null ? expense.getPaidBy().trim() : "";
+            Double amount = expense.getAmount() != null ? expense.getAmount() : 0.0;
+
+            List<String> splits = expense.getSplitAmong();
+            if (splits == null || splits.isEmpty()) {
+                splits = new ArrayList<>(balances.keySet());
+            }
+
+            if (splits.isEmpty()) continue;
+
+            double splitAmount = amount / splits.size();
+            balances.put(payer, balances.getOrDefault(payer, 0.0) + amount);
+
+            for (String member : splits) {
+                String trimmedMember = member.trim();
+                balances.put(trimmedMember, balances.getOrDefault(trimmedMember, 0.0) - splitAmount);
+            }
+        }
+
+        // --- PASTE THE SETTLED LIST CODE EXACTLY HERE ---
+        List<SettlementRecord> settledList = settlementRecordRepository.findByTripId(tripId);
+        if (settledList != null) {
+            for (SettlementRecord s : settledList) {
+                // Debtor paid back, balance moves up towards 0
+                balances.put(s.getFromUser(), balances.getOrDefault(s.getFromUser(), 0.0) + s.getAmount());
+                // Creditor received money, balance decreases towards 0
+                balances.put(s.getToUser(), balances.getOrDefault(s.getToUser(), 0.0) - s.getAmount());
+            }
+        }
+        // ------------------------------------------------
+
+        // 3. Match remaining debtors and creditors
+        PriorityQueue<Map.Entry<String, Double>> debtors = new PriorityQueue<>(Comparator.comparingDouble(Map.Entry::getValue));
+        PriorityQueue<Map.Entry<String, Double>> creditors = new PriorityQueue<>((a, b) -> Double.compare(b.getValue(), a.getValue()));
 
         for (Map.Entry<String, Double> entry : balances.entrySet()) {
-            double net = entry.getValue();
-            if (net < -0.01) {
-                debtors.add(new AbstractMap.SimpleEntry<>(entry.getKey(), -net));
-            } else if (net > 0.01) {
-                creditors.add(new AbstractMap.SimpleEntry<>(entry.getKey(), net));
+            if (entry.getValue() < -0.01) {
+                debtors.add(new AbstractMap.SimpleEntry<>(entry.getKey(), entry.getValue()));
+            } else if (entry.getValue() > 0.01) {
+                creditors.add(new AbstractMap.SimpleEntry<>(entry.getKey(), entry.getValue()));
             }
         }
 
-        List<SettlementResponse> settlements = new ArrayList<>();
+        List<Map<String, Object>> settlements = new ArrayList<>();
         while (!debtors.isEmpty() && !creditors.isEmpty()) {
             Map.Entry<String, Double> debtor = debtors.poll();
             Map.Entry<String, Double> creditor = creditors.poll();
 
-            double settledAmount = Math.min(debtor.getValue(), creditor.getValue());
-            settlements.add(new SettlementResponse(
-                    debtor.getKey(),
-                    creditor.getKey(),
-                    Math.round(settledAmount * 100.0) / 100.0
-            ));
+            double debit = Math.abs(debtor.getValue());
+            double credit = creditor.getValue();
+            double settledAmount = Math.min(debit, credit);
 
-            if (debtor.getValue() > settledAmount) {
-                debtors.add(new AbstractMap.SimpleEntry<>(debtor.getKey(), debtor.getValue() - settledAmount));
-            }
-            if (creditor.getValue() > settledAmount) {
-                creditors.add(new AbstractMap.SimpleEntry<>(creditor.getKey(), creditor.getValue() - settledAmount));
+            Map<String, Object> transaction = new HashMap<>();
+            transaction.put("from", debtor.getKey());
+            transaction.put("to", creditor.getKey());
+            transaction.put("amount", Math.round(settledAmount * 100.0) / 100.0);
+            settlements.add(transaction);
+
+            if (debit > credit) {
+                debtors.add(new AbstractMap.SimpleEntry<>(debtor.getKey(), -(debit - settledAmount)));
+            } else if (credit > debit) {
+                creditors.add(new AbstractMap.SimpleEntry<>(creditor.getKey(), credit - settledAmount));
             }
         }
 
         return settlements;
+    }
+
+    @Transactional
+    public void deleteTrip(Long tripId) {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        User currentUser = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + email));
+
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + tripId));
+
+        boolean isAdmin = currentUser.getRole() == Role.ROLE_ADMIN;
+        boolean isCreator = trip.getCreatedBy() != null &&
+                trip.getCreatedBy().getEmail().equalsIgnoreCase(currentUser.getEmail());
+
+        // Restrict deletion to Admin or Trip Creator
+        if (!isAdmin && !isCreator) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Unauthorized: Only the trip creator or an administrator can delete this trip."
+            );
+        }
+
+        tripRepository.delete(trip);
+    }
+
+    @Transactional
+    public Trip concludeTrip(Long tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new RuntimeException("Trip not found with id: " + tripId));
+
+        trip.setStatus("CONCLUDED");
+        return tripRepository.save(trip);
     }
 }

@@ -3,6 +3,42 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import Tesseract from 'tesseract.js';
 import BudgetPoolCard from '../components/BudgetPoolCard';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+
+// --- CENTRAL API HELPER (INLINE) ---
+const API_BASE_URL = 'http://localhost:8080/api';
+
+async function apiClient(endpoint, options = {}) {
+  const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
+  const headers = { ...(options.headers || {}) };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+  const response = await fetch(url, { ...options, headers });
+
+  if (response.status === 401) {
+    localStorage.removeItem('trip_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('email');
+    localStorage.removeItem('role');
+    if (!window.location.pathname.includes('/login')) {
+      alert('Your session has expired. Please sign in again.');
+      window.location.href = '/login';
+    }
+    throw new Error('Session expired');
+  }
+
+  return response;
+}
 
 export default function TripDetailPage() {
   const { id } = useParams();
@@ -30,6 +66,7 @@ export default function TripDetailPage() {
   });
 
   const [selectedSplitMembers, setSelectedSplitMembers] = useState([]);
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState(null);
   const [receiptFile, setReceiptFile] = useState(null);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [submittingExpense, setSubmittingExpense] = useState(false);
@@ -43,7 +80,19 @@ export default function TripDetailPage() {
       setLoading(true);
       setError('');
 
-      const tripRes = await fetch(`http://localhost:8080/api/trips/${id}`);
+
+      const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
+      const authHeaders = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      // Replaces manual fetch for trip data
+
+      /* const tripRes = await fetch(`http://localhost:8080/api/trips/${id}`, {
+        headers: authHeaders
+      });
+
       if (!tripRes.ok) throw new Error(`HTTP ${tripRes.status}`);
       const tripData = await tripRes.json();
       setTrip(tripData);
@@ -54,7 +103,25 @@ export default function TripDetailPage() {
       );
       setSelectedSplitMembers(allNames);
 
-      const settleRes = await fetch(`http://localhost:8080/api/trips/${id}/settlements`);
+      const settleRes = await fetch(`http://localhost:8080/api/trips/${id}/settlements`, {
+        headers: authHeaders
+      });
+      if (settleRes.ok) {
+        setSettlements(await settleRes.json());
+      } */
+      const tripRes = await apiClient(`/trips/${id}`);
+      if (!tripRes.ok) throw new Error(`HTTP ${tripRes.status}`);
+      const tripData = await tripRes.json();
+      setTrip(tripData);
+      setDriveUrlInput(tripData.mediaDriveUrl || '');
+
+      const allNames = (tripData.members || []).map(
+        (m) => `${m.firstName} ${m.lastName || ''}`.trim()
+      );
+      setSelectedSplitMembers(allNames);
+
+      // Replaces manual fetch for settlements
+      const settleRes = await apiClient(`/trips/${id}/settlements`);
       if (settleRes.ok) {
         setSettlements(await settleRes.json());
       }
@@ -70,6 +137,132 @@ export default function TripDetailPage() {
     loadTripDetails();
   }, [loadTripDetails]);
 
+  // --- PASTE handleMarkSettled HERE ---
+  const handleMarkSettled = async (from, to, amount) => {
+    if (!window.confirm(`Confirm payment of ₹${amount} from ${from} to ${to}?`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
+      /*  const res = await fetch(`http://localhost:8080/api/trips/${id}/settle`, {
+         method: 'POST',
+         headers: {
+           'Authorization': `Bearer ${token}`,
+           'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({ from, to, amount })
+       }); */
+      const res = await apiClient(`/trips/${id}/settle`, {
+        method: 'POST',
+        body: JSON.stringify({ from, to, amount })
+      });
+
+      if (!res.ok) throw new Error('Failed to record settlement payment');
+
+      // Refresh trip details and updated settlements list
+      await loadTripDetails();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Error recording settlement');
+    }
+  };
+
+  // --- EXPORT TRIP SUMMARY TO PDF ---
+  const handleExportPDF = () => {
+    if (!trip) return;
+
+    const doc = new jsPDF();
+
+    // 1. Header & Title Banner
+    doc.setFillColor(11, 25, 44); // Dark navy theme color
+    doc.rect(0, 0, 210, 35, 'F');
+
+    doc.setTextColor(245, 166, 35); // Accent gold
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MyTrip E-Manage Summary', 14, 18);
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Tour: ${trip.title} (ID: #${trip.id})`, 14, 26);
+    doc.text(
+      `Dates: ${trip.startDate || ''} to ${trip.endDate || ''} | Destination: ${trip.destination || 'N/A'}`,
+      14,
+      31
+    );
+
+    let currentY = 43;
+
+    // 2. Member Contributions Table
+    const memberRows = (trip.members || []).map((m) => [
+      `${m.firstName} ${m.lastName || ''}`.trim(),
+      `INR ${Number(m.initialContribution || 0).toLocaleString('en-IN')}`,
+    ]);
+
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Member Contributions & Budget Pool', 14, currentY);
+
+    autoTable(doc, {
+      startY: currentY + 4,
+      head: [['Member Name', 'Initial Contribution']],
+      body: memberRows,
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
+      styles: { fontSize: 9 },
+    });
+
+    currentY = doc.lastAutoTable.finalY + 12;
+
+    // 3. Logged Expenses Table
+    doc.text('Logged Expenses', 14, currentY);
+
+    const expenseRows = (trip.expenses || []).map((exp) => [
+      exp.title || 'Expense',
+      exp.category || 'General',
+      exp.paidBy || 'N/A',
+      `INR ${Number(exp.amount || 0).toLocaleString('en-IN')}`,
+    ]);
+
+    autoTable(doc, {
+      startY: currentY + 4,
+      head: [['Description', 'Category', 'Paid By', 'Amount']],
+      body: expenseRows.length > 0 ? expenseRows : [['No expenses recorded', '-', '-', '-']],
+      theme: 'striped',
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
+      styles: { fontSize: 9 },
+    });
+
+    currentY = doc.lastAutoTable.finalY + 12;
+
+    // 4. Optimal Debt Settlements Table
+    doc.text('Optimal Debt Settlements (Pending Dues)', 14, currentY);
+
+    const settlementRows = (settlements || []).map((s) => [
+      s.from || s.fromUser || s.debtor,
+      s.to || s.toUser || s.creditor,
+      `INR ${Number(s.amount || 0).toLocaleString('en-IN')}`,
+    ]);
+
+    autoTable(doc, {
+      startY: currentY + 4,
+      head: [['Debtor (Owes)', 'Creditor (Receives)', 'Amount to Settle']],
+      body:
+        settlementRows.length > 0
+          ? settlementRows
+          : [['All balances are settled', '-', 'INR 0']],
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
+      styles: { fontSize: 9 },
+    });
+
+
+    // 5. Save/Download File
+    doc.save(`${trip.title.replace(/\s+/g, '_')}_Trip_Summary.pdf`);
+  };
   // Save/Update Google Drive link
   const handleSaveDriveUrl = async () => {
     try {
@@ -95,182 +288,159 @@ export default function TripDetailPage() {
 
   // Conclude Trip Early
   const handleConcludeTrip = async () => {
-    const confirmed = window.confirm(
-      'Are you sure you want to end this trip early? This will finalize the current date as the end date, lock new expense logs, and compute final pool refunds.'
-    );
-    if (!confirmed) return;
+    if (!window.confirm("Are you sure you want to end and conclude this trip? No further expenses should be added.")) {
+      return;
+    }
 
     try {
-      setConcludingTrip(true);
-      const res = await fetch(`http://localhost:8080/api/trips/${id}/conclude`, {
-        method: 'PATCH',
+      const res = await apiClient(`/trips/${id}/conclude`, {
+        method: 'PUT'
       });
 
-      if (!res.ok) throw new Error('Failed to conclude trip');
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Failed to end trip: ${errorText}`);
+      }
+
+      alert("Trip has been successfully concluded and settled!");
+
+      // Reload details to reflect CONCLUDED status
       await loadTripDetails();
     } catch (err) {
-      alert(err.message || 'Error ending trip');
-    } finally {
-      setConcludingTrip(false);
+      console.error("Error concluding trip:", err);
+      alert(err.message || "Failed to conclude trip");
     }
   };
 
   // Delete Trip
+  const currentEmail = localStorage.getItem('email');
+  const userRole = localStorage.getItem('role');
+  const isAdmin = userRole === 'ROLE_ADMIN';
+  const isCreator = trip?.createdBy?.email === currentEmail;
+
   const handleDeleteTrip = async () => {
-    const confirmed = window.confirm(
-      `Are you sure you want to permanently delete "${trip.title}"? All logged expenses and member records for this trip will be removed.`
-    );
-    if (!confirmed) return;
+    if (!window.confirm('Are you sure you want to permanently delete this trip and its expense logs?')) {
+      return;
+    }
 
     try {
       setDeletingTrip(true);
+      const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
+
       const res = await fetch(`http://localhost:8080/api/trips/${id}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
 
-      if (!res.ok) {
-        throw new Error(`Failed to delete trip (HTTP ${res.status})`);
-      }
+      if (!res.ok) throw new Error('Failed to delete trip');
 
+      // Return to homepage
       navigate('/');
     } catch (err) {
-      alert(err.message || 'Failed to delete trip');
+      alert(err.message || 'Error deleting trip');
+    } finally {
       setDeletingTrip(false);
     }
   };
 
+
+
   // Comprehensive OCR Parser
+  // --- OCR HANDLER FOR RECEIPT IMAGES ---
   const handleReceiptChange = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
 
     setReceiptFile(file);
     setOcrLoading(true);
 
     try {
-      const { data: { text } } = await Tesseract.recognize(file, 'eng');
-      const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+      const result = await Tesseract.recognize(file, 'eng', {
+        logger: (m) => console.log('OCR:', m.status, Math.round((m.progress || 0) * 100) + '%'),
+      });
 
-      let detectedAmount = null;
-      let detectedProduct = '';
+      const rawText = result?.data?.text || '';
+      console.log('--- OCR RAW SCANNED TEXT ---\n', rawText);
 
-      const fuelAmountRegex = /(?:amount\s*(?:\(\s*(?:rs|inr|\₹)\s*\))?|net\s*amt|sale\s*amt)\s*[:=]?\s*0*([0-9]+\.[0-9]{2})\b/i;
-      const productRegex = /product\s*[:=]\s*([a-zA-Z\s]+)/i;
+      // Split text into individual rows/lines
+      const lines = rawText
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
 
-      for (let i = 0; i < lines.length; i++) {
+      // Target keywords to search for
+      const keywords = [
+        'grand total',
+        'total amount',
+        'net amount',
+        'bill amount',
+        'sub total',
+        'subtotal',
+        'total',
+        'amount paid',
+        'amount due',
+        'amount'
+      ];
+
+      let extractedAmount = null;
+
+      // Scan rows from bottom to top (totals always sit near the bottom)
+      for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i];
+        const lowerLine = line.toLowerCase();
 
-        if (/^(?:atot|vtot|totizer|tot|cum)/i.test(line)) {
-          continue;
-        }
+        // Check if this line contains any of our target keywords
+        const foundKeyword = keywords.find((k) => lowerLine.includes(k));
 
-        const prodMatch = line.match(productRegex);
-        if (prodMatch && prodMatch[1]) {
-          detectedProduct = prodMatch[1].trim();
-        }
+        if (foundKeyword) {
+          // Extract any numeric price pattern in that exact same row
+          // Supports formats like: 120, 120.00, 1,200.50, ₹1500
+          const matches = line.match(/\d+(?:[.,]\d{1,2})?/g);
 
-        const fuelMatch = line.match(fuelAmountRegex);
-        if (fuelMatch && fuelMatch[1]) {
-          const val = parseFloat(fuelMatch[1]);
-          if (!isNaN(val) && val > 0 && val < 100000) {
-            detectedAmount = val;
-            break;
-          }
-        }
-      }
-
-      if (!detectedAmount) {
-        const generalKeywords = new RegExp(
-          [
-            'bill\\s*(?:with\\s*)?amount',
-            'billed\\s*amount',
-            'total\\s*bill',
-            'bill\\s*total',
-            'net\\s*payable(?:\\s*amount)?',
-            'total\\s*payable',
-            'amount\\s*payable',
-            'pay\\s*amount',
-            'amount\\s*due',
-            'total\\s*due',
-            'invoice\\s*total',
-            'grand\\s*total',
-            'net\\s*total',
-            'total\\s*amount',
-            'final\\s*amount',
-            'gross\\s*total',
-            'total\\s*(?:inr|rs\\.?|₹)',
-            'balance\\s*due',
-            'total'
-          ].join('|'),
-          'i'
-        );
-
-        const numberRegex = /(?:₹|rs\.?|inr)?\s*0*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/i;
-
-        for (let i = lines.length - 1; i >= 0; i--) {
-          const line = lines[i];
-
-          if (/^(?:atot|vtot|totizer|tel|phone|fcc|vat|cst|lst)/i.test(line)) {
-            continue;
-          }
-
-          if (generalKeywords.test(line)) {
-            const matched = line.split(generalKeywords)[1]?.match(numberRegex);
-            if (matched && matched[1]) {
-              const val = parseFloat(matched[1].replace(/,/g, ''));
-              if (!isNaN(val) && val > 0 && val < 500000) {
-                detectedAmount = val;
-                break;
-              }
-            }
-
-            if (!detectedAmount && i + 1 < lines.length) {
-              const nextLineMatch = lines[i + 1].match(numberRegex);
-              if (nextLineMatch && nextLineMatch[1]) {
-                const val = parseFloat(nextLineMatch[1].replace(/,/g, ''));
-                if (!isNaN(val) && val > 0 && val < 500000) {
-                  detectedAmount = val;
-                  break;
-                }
-              }
+          if (matches && matches.length > 0) {
+            // Get the last number appearing on that line (which is usually the amount next to the keyword)
+            const matchedValue = parseFloat(matches[matches.length - 1].replace(',', ''));
+            if (!isNaN(matchedValue) && matchedValue > 0) {
+              extractedAmount = matchedValue;
+              console.log(`Matched amount "${matchedValue}" on line: "${line}" (Keyword: "${foundKeyword}")`);
+              break;
             }
           }
         }
       }
 
-      let generatedDescription = detectedProduct ? `${detectedProduct} (Fuel)` : '';
-
-      if (!generatedDescription) {
-        const detectedItems = [];
-        const ignoreLinePatterns = /(?:subtotal|sub\s*total|cgst|sgst|gst|tax|vat|service\s*charge|discount|round\s*off|cash|card|upi|visa|mastercard|change|balance|table|order|invoice|bill\s*no|date|time|phone|tel|fssai|gstin|welcome|thank\s*you|atot|vtot|fcc|nozzle|fip|preset|volume|rate)/i;
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (/total|amount/i.test(line) || ignoreLinePatterns.test(line)) continue;
-
-          let cleanItem = line
-            .replace(/^[0-9]+[\.\)\s-]+/, '')
-            .replace(/(?:₹|rs\.?|inr)\s*[0-9]+(?:[\.,][0-9]{2})?/gi, '')
-            .replace(/[0-9]+(?:[\.,][0-9]{2})?\s*$/, '')
-            .replace(/\b\d+\s*(?:qty|nos|pcs|x)\b/gi, '')
-            .replace(/[^\w\s-]/g, '')
-            .trim();
-
-          if (cleanItem.length >= 3 && /[a-zA-Z]{3,}/.test(cleanItem)) {
-            if (!detectedItems.includes(cleanItem)) detectedItems.push(cleanItem);
+      // Fallback: If keyword was on its own line and the number is on the very next row
+      if (extractedAmount === null) {
+        for (let i = 0; i < lines.length - 1; i++) {
+          const lowerLine = lines[i].toLowerCase();
+          const foundKeyword = keywords.find((k) => lowerLine === k || lowerLine === `${k}:`);
+          if (foundKeyword) {
+            const nextLine = lines[i + 1];
+            const nextMatches = nextLine.match(/\d+(?:[.,]\d{1,2})?/g);
+            if (nextMatches && nextMatches.length > 0) {
+              extractedAmount = parseFloat(nextMatches[0].replace(',', ''));
+              break;
+            }
           }
         }
-        generatedDescription = detectedItems.slice(0, 5).join(', ');
       }
 
+      // Extract Description: First clean line that isn't a receipt header noise
+      const cleanHeaderLines = lines.filter(
+        (l) => l.length >= 3 && !/^[0-9\W]+$/.test(l) && !/welcome|tax invoice|receipt|cash memo|bill/i.test(l)
+      );
+      const extractedTitle = cleanHeaderLines.length > 0 ? cleanHeaderLines[0] : '';
+
+      // Populate Form Fields
       setExpenseForm((prev) => ({
         ...prev,
-        amount: detectedAmount !== null ? detectedAmount.toString() : prev.amount,
-        title: generatedDescription ? generatedDescription : prev.title,
-        category: detectedProduct ? 'Transport' : prev.category,
+        title: extractedTitle || prev.title,
+        amount: extractedAmount !== null ? String(extractedAmount) : prev.amount,
       }));
-    } catch (ocrErr) {
-      console.warn('OCR extraction failed:', ocrErr);
+    } catch (err) {
+      console.error('OCR processing error:', err);
     } finally {
       setOcrLoading(false);
     }
@@ -288,21 +458,33 @@ export default function TripDetailPage() {
     }
   };
 
+
   const handleExpenseSubmit = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    console.log("Submitting expense form...", expenseForm);
+
     if (!expenseForm.title || !expenseForm.amount || !expenseForm.paidBy) {
-      alert('Please fill out all required fields.');
+      alert("Please fill in Description, Amount, and Paid By.");
       return;
     }
 
+    setSubmittingExpense(true);
+
     try {
-      setSubmittingExpense(true);
+      const token = localStorage.getItem('trip_token') || localStorage.getItem('token');
+      if (!token) throw new Error('Authentication required');
+
       const formData = new FormData();
       formData.append('title', expenseForm.title);
       formData.append('amount', parseFloat(expenseForm.amount));
       formData.append('paidBy', expenseForm.paidBy);
-      formData.append('category', expenseForm.category);
-      selectedSplitMembers.forEach((m) => formData.append('splitAmong', m));
+      if (expenseForm.category) {
+        formData.append('category', expenseForm.category);
+      }
+
+      (selectedSplitMembers || []).forEach((member) => {
+        formData.append('splitAmong', member);
+      });
 
       if (receiptFile) {
         formData.append('receipt', receiptFile);
@@ -310,25 +492,49 @@ export default function TripDetailPage() {
 
       const res = await fetch(`http://localhost:8080/api/trips/${id}/expenses`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData,
       });
 
-      if (!res.ok) throw new Error('Failed to record expense');
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Server returned HTTP ${res.status}: ${errorText}`);
+      }
 
+      // Safe parse: handles JSON or empty 200 response
+      let savedData = null;
+      try {
+        savedData = await res.json();
+      } catch (_) {
+        savedData = {};
+      }
+
+      // 1. Prepare pop-up summary data
+      const splitCount = selectedSplitMembers?.length || 1;
+      const totalAmt = parseFloat(expenseForm.amount);
       setLoggedExpenseSummary({
         title: expenseForm.title,
-        amount: expenseForm.amount,
+        amount: totalAmt,
         paidBy: expenseForm.paidBy,
-        category: expenseForm.category,
-        splitCount: selectedSplitMembers.length,
+        splitCount: splitCount,
+        perPerson: (totalAmt / splitCount).toFixed(2),
       });
+
+      // 2. Open pop-up modal
+      console.log("Opening confirmation modal...");
       setShowExpenseModal(true);
 
-      setExpenseForm({ title: '', amount: '', paidBy: '', category: 'Food' });
+      // 3. Reset form inputs
+      setExpenseForm({ title: '', amount: '', paidBy: '', category: 'Food & Dining' });
       setReceiptFile(null);
+
+      // 4. Refresh background calculations
       await loadTripDetails();
     } catch (err) {
-      alert(err.message || 'Error recording expense');
+      console.error('Error recording expense:', err);
+      alert(err.message || 'Failed to record expense');
     } finally {
       setSubmittingExpense(false);
     }
@@ -365,17 +571,46 @@ export default function TripDetailPage() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-csk-blueDark text-slate-800 dark:text-slate-100 py-8 px-4 transition-colors relative">
       <div className="max-w-6xl mx-auto space-y-8">
-        
+
         {/* Navigation Breadcrumb & Actions */}
         <div className="flex items-center justify-between">
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="text-xs font-bold uppercase tracking-wider text-slate-500 hover:text-csk-yellow transition flex items-center gap-1"
           >
             {t('backToAll', '← Back to All Trips')}
           </Link>
-
           <div className="flex items-center gap-2">
+            {/* --- PASTE EXPORT PDF BUTTON HERE --- */}
+            <button
+              onClick={handleExportPDF}
+              className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition cursor-pointer flex items-center gap-1.5"
+            >
+              📄 EXPORT PDF
+            </button>
+            {/* ------------------------------------- */}
+
+            <button
+              onClick={handleConcludeTrip}
+              disabled={trip?.status === 'CONCLUDED'}
+              className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition cursor-pointer ${trip?.status === 'CONCLUDED'
+                  ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'border-amber-500/30 bg-amber-500/10 text-[#f5a623] hover:bg-[#f5a623] hover:text-slate-950'
+                }`}
+            >
+              {trip?.status === 'CONCLUDED' ? 'TRIP CONCLUDED' : 'END TRIP & SETTLE'}
+            </button>
+
+            {(isAdmin || isCreator) && (
+              <button
+                onClick={handleDeleteTrip}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition cursor-pointer"
+              >
+                DELETE
+              </button>
+            )}
+          </div>
+          {/*  <div className="flex items-center gap-2">
             <span className="text-xs font-semibold px-3 py-1 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
               Trip ID: #{trip.id}
             </span>
@@ -401,19 +636,33 @@ export default function TripDetailPage() {
             >
               {deletingTrip ? 'Deleting...' : 'Delete'}
             </button>
-          </div>
+          </div> */}
         </div>
 
         {/* Hero Header */}
         <div className="bg-white dark:bg-csk-slate p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-black text-csk-blue dark:text-csk-yellow">{trip.title}</h1>
-              {isConcluded && (
-                <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
-                  Ended Early / Concluded
-                </span>
-              )}
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
+                {trip?.title}
+              </h1>
+              <p className="text-xs text-slate-400 mt-1">
+                {trip?.destination} • {trip?.startDate} to {trip?.endDate}
+              </p>
+            </div>
+
+            {/* Top Actions: Conclude, Drive Link, Delete */}
+            <div className="flex items-center gap-3">
+              {/* --- PASTE SNIPPET 2 HERE --- */}
+              {/*   {(isAdmin || isCreator) && (
+      <button
+        onClick={handleDeleteTrip}
+        disabled={deletingTrip}
+        className="text-xs font-bold px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition cursor-pointer"
+      >
+        {deletingTrip ? 'Deleting...' : 'Delete Trip'}
+      </button>
+    )} */}
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2">
               <span>📍 {trip.destination}</span>
@@ -529,7 +778,7 @@ export default function TripDetailPage() {
 
         {/* Expense Entry & Settlements Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
+
           {/* Form: Log Expense */}
           <div className="lg:col-span-1 bg-white dark:bg-csk-slate p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <h2 className="text-lg font-bold text-csk-blue dark:text-csk-yellow mb-4 uppercase tracking-wide">
@@ -548,23 +797,26 @@ export default function TripDetailPage() {
               </div>
             ) : (
               <form onSubmit={handleExpenseSubmit} className="space-y-4">
-                
+
                 {/* Receipt Upload */}
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                    {t('receiptOptional', 'Receipt Image (Optional)')}
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                    RECEIPT IMAGE (OPTIONAL)
                   </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleReceiptChange}
-                    className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-csk-yellow/20 file:text-csk-yellow hover:file:bg-csk-yellow/30 cursor-pointer"
-                  />
-                  {ocrLoading && (
-                    <p className="text-[11px] text-csk-yellow mt-1.5 font-bold animate-pulse">
-                      ⚡ Reading bill keywords, items & payable total...
-                    </p>
-                  )}
+                  <div className="flex items-center gap-3">
+                    <label className="cursor-pointer text-xs font-bold px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[#f5a623] border border-slate-700 transition">
+                      {ocrLoading ? 'Scanning receipt...' : 'Choose File'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleReceiptChange}
+                      />
+                    </label>
+                    <span className="text-xs text-slate-400 truncate max-w-[200px]">
+                      {receiptFile ? receiptFile.name : 'No file chosen'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Expense Description */}
@@ -666,10 +918,10 @@ export default function TripDetailPage() {
 
                 <button
                   type="submit"
-                  disabled={submittingExpense || ocrLoading}
-                  className="w-full mt-2 py-3 rounded-xl bg-csk-yellow hover:bg-csk-yellowDark text-csk-blue font-bold shadow transition active:scale-95 disabled:opacity-50 text-sm uppercase"
+                  disabled={submittingExpense}
+                  className="w-full py-3 rounded-xl bg-[#f5a623] hover:bg-[#e0961e] text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer"
                 >
-                  {submittingExpense ? 'Logging...' : t('logDeduct', 'Log & Deduct from Pool')}
+                  {submittingExpense ? 'LOGGING...' : 'LOG EXPENSE'}
                 </button>
               </form>
             )}
@@ -677,32 +929,49 @@ export default function TripDetailPage() {
 
           {/* Settlements & Expense History */}
           <div className="lg:col-span-2 space-y-6">
-            
+
             {/* Optimal Settlements */}
-            <div className="bg-white dark:bg-csk-slate p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <h2 className="text-lg font-bold text-csk-blue dark:text-csk-yellow mb-3 uppercase tracking-wide">
-                {t('optimalSettlements', 'OPTIMAL DEBT SETTLEMENTS')}
-              </h2>
-              {settlements.length === 0 ? (
-                <p className="text-sm text-slate-400">{t('noDues', 'All member balances are settled. No dues pending.')}</p>
-              ) : (
-                <div className="space-y-2">
-                  {settlements.map((s, idx) => (
-                    <div 
-                      key={idx} 
-                      className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-csk-blueDark/50 border border-slate-100 dark:border-slate-800 text-sm"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{s.debtor}</span>
-                        <span className="text-xs text-slate-400 font-semibold uppercase">{t('owes', 'OWES')}</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{s.creditor}</span>
+            {/* OPTIMAL DEBT SETTLEMENTS CARD */}
+            <div className="p-6 rounded-2xl bg-[#0b192c] border border-slate-800 shadow-sm">
+              <h3 className="font-bold text-sm tracking-wider uppercase text-[#f5a623] mb-4">
+                OPTIMAL DEBT SETTLEMENTS
+              </h3>
+
+              {settlements && settlements.length > 0 ? (
+                <div className="space-y-2.5">
+                  {settlements.map((s, idx) => {
+                    const debtor = s.from || s.fromUser || s.debtor;
+                    const creditor = s.to || s.toUser || s.creditor;
+                    const amountVal = Number(s.amount);
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex justify-between items-center p-3.5 rounded-xl bg-slate-900/80 border border-slate-800"
+                      >
+                        <span className="text-xs sm:text-sm font-medium text-slate-300">
+                          <span className="text-red-400 font-bold">{debtor}</span>
+                          <span className="text-slate-400 mx-1.5 font-normal">owes</span>
+                          <span className="text-emerald-400 font-bold">{creditor}</span>
+                        </span>
+
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-extrabold text-[#f5a623] font-mono">
+                            ₹{amountVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </span>
+                          <button
+                            onClick={() => handleMarkSettled(debtor, creditor, amountVal)}
+                            className="text-[11px] font-bold px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500 hover:text-slate-950 transition cursor-pointer"
+                          >
+                            MARK PAID
+                          </button>
+                        </div>
                       </div>
-                      <span className="font-black text-csk-blue dark:text-csk-yellow text-base">
-                        ₹{(parseFloat(s.amount) || 0).toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+              ) : (
+                <p className="text-xs text-slate-400">All member balances are settled. No dues pending.</p>
               )}
             </div>
 
@@ -716,7 +985,7 @@ export default function TripDetailPage() {
               ) : (
                 <div className="space-y-3">
                   {trip.expenses.map((expense, idx) => (
-                    <div 
+                    <div
                       key={idx}
                       className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-csk-blueDark/40"
                     >
@@ -729,14 +998,21 @@ export default function TripDetailPage() {
 
                       <div className="flex items-center gap-4">
                         {expense.receiptUrl && (
-                          <a
-                            href={`http://localhost:8080${expense.receiptUrl}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-csk-yellow hover:underline font-semibold"
+                          /*  <a
+                             href={`http://localhost:8080${expense.receiptUrl}`}
+                             target="_blank"
+                             rel="noopener noreferrer"
+                             className="text-xs text-csk-yellow hover:underline font-semibold"
+                           >
+                             📎 Receipt
+                           </a> */
+                          <button
+                            type="button"
+                            onClick={() => setPreviewReceiptUrl(exp.receiptUrl)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#f5a623] hover:underline cursor-pointer"
                           >
                             📎 Receipt
-                          </a>
+                          </button>
                         )}
                         <span className="font-black text-slate-900 dark:text-white text-base">
                           ₹{(parseFloat(expense.amount) || 0).toLocaleString()}
@@ -755,52 +1031,86 @@ export default function TripDetailPage() {
       </div>
 
       {/* Confirmation Modal for Logged Expense */}
+      {/* EXPENSE CONFIRMATION POP-UP MODAL */}
+
       {showExpenseModal && loggedExpenseSummary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm bg-white dark:bg-csk-slate rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-5 animate-scaleUp">
-            
-            <div className="w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-2xl mx-auto shadow-inner">
+        <div className="fixed inset-0 z-999 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md bg-[#0b192c] border border-slate-700 rounded-2xl p-6 shadow-2xl text-center">
+
+            <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-2xl font-bold">
               ✓
             </div>
 
-            <div>
-              <span className="text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-500">
-                Expense Logged
-              </span>
-              <h3 className="text-xl font-black text-slate-900 dark:text-white mt-2">
-                {loggedExpenseSummary.title}
-              </h3>
-              <p className="text-2xl font-black text-csk-blue dark:text-csk-yellow mt-1">
-                ₹{parseFloat(loggedExpenseSummary.amount).toLocaleString()}
-              </p>
-            </div>
+            <h3 className="text-lg font-bold text-white mb-1">
+              Expense Logged Successfully!
+            </h3>
+            <p className="text-xs text-slate-400 mb-5">
+              Balances and optimal debt settlements have been updated.
+            </p>
 
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-csk-blueDark/50 border border-slate-100 dark:border-slate-800 text-xs text-left space-y-1.5">
-              <div className="flex justify-between">
+            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 text-left space-y-2 mb-6">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-400">Description:</span>
+                <span className="font-semibold text-white truncate max-w-[200px]">
+                  {loggedExpenseSummary.title}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-400">Amount:</span>
+                <span className="font-bold text-[#f5a623] font-mono">
+                  ₹{Number(loggedExpenseSummary.amount).toLocaleString('en-IN')}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs">
                 <span className="text-slate-400">Paid By:</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">{loggedExpenseSummary.paidBy}</span>
+                <span className="font-semibold text-white">
+                  {loggedExpenseSummary.paidBy}
+                </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Category:</span>
-                <span className="font-medium text-slate-700 dark:text-slate-300">{loggedExpenseSummary.category}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Split Between:</span>
-                <span className="font-semibold text-csk-yellow">{loggedExpenseSummary.splitCount} Members</span>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-400">Split Across:</span>
+                <span className="font-semibold text-slate-300">
+                  {loggedExpenseSummary.splitCount} Members (₹{loggedExpenseSummary.perPerson}/each)
+                </span>
               </div>
             </div>
 
             <button
-              onClick={() => setShowExpenseModal(false)}
-              className="w-full py-3.5 rounded-xl bg-csk-yellow hover:bg-csk-yellowDark text-csk-blue font-black uppercase text-xs tracking-wider shadow-lg transition active:scale-95"
+              type="button"
+              onClick={() => {
+                setShowExpenseModal(false);
+                setLoggedExpenseSummary(null);
+              }}
+              className="w-full py-2.5 rounded-xl bg-[#f5a623] hover:bg-[#e0961e] text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer"
             >
-              Done & Update Pool
+              Done / Continue
             </button>
-
           </div>
         </div>
       )}
-
+      {/* RECEIPT PREVIEW MODAL */}
+      {previewReceiptUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="relative max-w-2xl w-full bg-[#0b192c] border border-slate-800 rounded-2xl p-4 shadow-2xl">
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="text-sm font-bold text-white">Receipt Attachment</h4>
+              <button
+                onClick={() => setPreviewReceiptUrl(null)}
+                className="text-slate-400 hover:text-white text-lg font-bold px-2"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-auto rounded-xl flex justify-center bg-slate-950 p-2">
+              <img
+                src={previewReceiptUrl}
+                alt="Receipt Preview"
+                className="max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

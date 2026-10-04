@@ -1,8 +1,8 @@
 package com.mytrip.backendmt.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -10,6 +10,7 @@ import java.util.List;
 @Table(name = "trips")
 @Data
 public class Trip {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -35,8 +36,13 @@ public class Trip {
     @Column(name = "media_drive_url", length = 1000)
     private String mediaDriveUrl;
 
-    @ElementCollection(fetch = FetchType.EAGER)
-    @CollectionTable(name = "trip_members", joinColumns = @JoinColumn(name = "trip_id"))
+    // Prevent lazy-loading proxy failures during JSON serialization
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "created_by_user_id", nullable = false)
+    @JsonIgnoreProperties({"password", "trips", "authorities"})
+    private User createdBy;
+
+    @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<TripMember> members = new ArrayList<>();
 
     @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)

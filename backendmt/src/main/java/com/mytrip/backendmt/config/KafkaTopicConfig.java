@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 
-@Configuration
+//@Configuration
 public class KafkaTopicConfig {
 
     public static final String EXPENSE_TOPIC = "trip-expenses-topic";

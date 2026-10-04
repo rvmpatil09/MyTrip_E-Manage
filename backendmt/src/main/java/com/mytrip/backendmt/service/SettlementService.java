@@ -4,6 +4,7 @@ import com.mytrip.backendmt.dto.SettlementDto;
 import com.mytrip.backendmt.entity.Expense;
 import com.mytrip.backendmt.entity.Trip;
 import com.mytrip.backendmt.entity.TripMember;
+import com.mytrip.backendmt.entity.User;
 import com.mytrip.backendmt.repository.ExpenseRepository;
 import com.mytrip.backendmt.repository.TripRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,7 @@ public class SettlementService {
                 .orElseThrow(() -> new RuntimeException("Trip not found with ID: " + tripId));
 
         List<String> memberNames = trip.getMembers().stream()
-                .map(TripMember::getFullName)
+                .map(TripMember::getFirstName)
                 .collect(Collectors.toList());
 
         List<Expense> expenses = expenseRepository.findByTripId(tripId);

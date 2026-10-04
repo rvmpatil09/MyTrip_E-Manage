@@ -17,13 +17,19 @@ public class User {
 
     private String lastName;
 
+
     @Column(nullable = false, unique = true)
     private String email;
 
     @Column(nullable = false)
     private String password;
 
-    private String role = "ROLE_USER";
+    private String mobileNumber;
+
+    // In the User entity fields:
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Role role = Role.ROLE_USER;
 
     public User() {}
 

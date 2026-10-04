@@ -1,42 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 export default function Navbar({ darkMode, setDarkMode }) {
-  const { i18n } = useTranslation();
   const navigate = useNavigate();
-  const location = useLocation();
-  const [currentUser, setCurrentUser] = useState(null);
+  const { i18n } = useTranslation();
 
-  const checkAuth = () => {
-    const userStr = localStorage.getItem('trip_user');
-    if (userStr) {
-      try {
-        setCurrentUser(JSON.parse(userStr));
-      } catch {
-        setCurrentUser(null);
-      }
-    } else {
-      setCurrentUser(null);
-    }
-  };
+  // Token & user retrieval supporting both storage key variations
+  const getStoredToken = () => localStorage.getItem('trip_token') || localStorage.getItem('token');
+  const getStoredFirstName = () => localStorage.getItem('firstName') || 'User';
+  const getStoredRole = () => localStorage.getItem('role') || '';
+
+  const [token, setToken] = useState(getStoredToken);
+  const [firstName, setFirstName] = useState(getStoredFirstName);
+  const [role, setRole] = useState(getStoredRole);
 
   useEffect(() => {
-    checkAuth();
+    const syncAuth = () => {
+      setToken(getStoredToken());
+      setFirstName(getStoredFirstName());
+      setRole(getStoredRole());
+    };
 
-    window.addEventListener('storage', checkAuth);
-    window.addEventListener('authChange', checkAuth);
+    window.addEventListener('authChange', syncAuth);
+    window.addEventListener('storage', syncAuth);
 
     return () => {
-      window.removeEventListener('storage', checkAuth);
-      window.removeEventListener('authChange', checkAuth);
+      window.removeEventListener('authChange', syncAuth);
+      window.removeEventListener('storage', syncAuth);
     };
   }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('trip_token');
-    localStorage.removeItem('trip_user');
-    setCurrentUser(null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('email');
+    localStorage.removeItem('firstName');
+    localStorage.removeItem('lastName');
+    localStorage.removeItem('role');
+    localStorage.removeItem('user');
+
+    setToken(null);
     window.dispatchEvent(new Event('authChange'));
     navigate('/login');
   };
@@ -46,16 +50,12 @@ export default function Navbar({ darkMode, setDarkMode }) {
     i18n.changeLanguage(nextLang);
   };
 
-  // Check if user is on the login or register page
-  const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
-
   return (
     <header className="sticky top-0 z-40 bg-[#071324] border-b border-slate-800/80 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
         
-        {/* Exact Original Brand: Car Squircle + MyTrip E-Manage + Subtext */}
+        {/* Brand: Car Squircle + MyTrip E-Manage + Subtext */}
         <Link to="/" className="flex items-center gap-3.5 group">
-          {/* Yellow Rounded Car Icon Badge */}
           <div className="w-11 h-11 rounded-2xl bg-[#f5a623] flex items-center justify-center text-slate-900 shadow-md">
             <svg 
               className="w-6 h-6 fill-current" 
@@ -67,7 +67,6 @@ export default function Navbar({ darkMode, setDarkMode }) {
             </svg>
           </div>
 
-          {/* Titles & Tagline */}
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-2xl tracking-tight text-[#f5a623]">
@@ -85,7 +84,6 @@ export default function Navbar({ darkMode, setDarkMode }) {
 
         {/* Right Controls */}
         <div className="flex items-center gap-2.5 sm:gap-3">
-          
           {/* Language Selector Button */}
           <button
             onClick={toggleLanguage}
@@ -96,7 +94,7 @@ export default function Navbar({ darkMode, setDarkMode }) {
               <circle cx="12" cy="12" r="10" strokeWidth="2"/>
               <path strokeWidth="2" d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
             </svg>
-            <span>{i18n.language === 'en' ? 'English' : 'मराठी'}</span>
+            <span>{i18n.language?.startsWith('en') ? 'English' : 'मराठी'}</span>
           </button>
 
           {/* Theme Toggle Button */}
@@ -116,44 +114,42 @@ export default function Navbar({ darkMode, setDarkMode }) {
             )}
           </button>
 
-          {/* User Auth Info / Buttons */}
-          {currentUser ? (
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline-block text-xs font-semibold text-slate-300">
-                Hi, <span className="font-bold text-[#f5a623]">{currentUser.firstName}</span>
-              </span>
+          {/* Conditional Auth Rendering: User Badge + LOGOUT vs LOGIN / REGISTER */}
+          {token ? (
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col text-right">
+                <span className="text-xs font-bold text-white tracking-wide">
+                  {firstName}
+                </span>
+                {role && (
+                  <span className="text-[9.5px] font-mono font-semibold text-slate-400 uppercase tracking-wider">
+                    {role.replace('ROLE_', '')}
+                  </span>
+                )}
+              </div>
+
               <button
                 onClick={handleLogout}
-                className="px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-950/40 text-xs font-bold uppercase transition"
+                className="text-xs font-bold px-3.5 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition duration-200 cursor-pointer shadow-sm"
               >
-                Logout
+                LOGOUT
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="flex items-center gap-2">
               <Link
                 to="/login"
-                className="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-[#f5a623] text-xs font-bold uppercase transition"
+                className="text-xs font-bold px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-300 transition"
               >
-                Login
+                LOGIN
               </Link>
               <Link
                 to="/register"
-                className="px-3 py-1.5 rounded-lg bg-[#f5a623] hover:bg-[#d98f18] text-slate-950 text-xs font-black uppercase transition"
+                className="text-xs font-bold px-4 py-2 rounded-lg bg-[#f5a623] text-slate-950 hover:bg-[#e0961e] transition shadow-md"
               >
-                Register
+                REGISTER
               </Link>
             </div>
-          )}
-
-          {/* '+ New Trip' Yellow Pill Button: Only when signed in and not on login/register */}
-          {currentUser && !isAuthPage && (
-            <Link
-              to="/create-trip"
-              className="inline-flex items-center gap-1 px-4 py-2 rounded-full bg-[#f5a623] hover:bg-[#d98f18] text-slate-950 font-black text-xs uppercase tracking-wider shadow-md transition transform active:scale-95"
-            >
-              <span>+ New Trip</span>
-            </Link>
           )}
 
         </div>

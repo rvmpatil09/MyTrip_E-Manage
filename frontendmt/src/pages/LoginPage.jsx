@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -28,12 +29,23 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Login failed');
 
+      // Save token and user details to localStorage
       localStorage.setItem('trip_token', data.token);
-      localStorage.setItem('trip_user', JSON.stringify(data.user));
+      localStorage.setItem('email', data.email);
+      localStorage.setItem('firstName', data.firstName || 'User');
+      localStorage.setItem('lastName', data.lastName || '');
+      localStorage.setItem('role', data.role || 'ROLE_USER');
+      localStorage.setItem('user', JSON.stringify({
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+        role: data.role
+      }));
 
-      // Trigger custom storage event for navbar updates
+      // Trigger custom navbar update event
       window.dispatchEvent(new Event('authChange'));
 
+      // Redirect to dashboard
       navigate(from, { replace: true });
     } catch (err) {
       setError(err.message || 'Invalid email or password');
